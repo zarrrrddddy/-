@@ -36,6 +36,19 @@
     z-index: 0;
   }
 
+  .float-bubble {
+    position: fixed;
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.35;
+    animation: floatY 6s ease-in-out infinite;
+  }
+  @keyframes floatY {
+    0%, 100% { transform: translateY(0) translateX(0); }
+    50% { transform: translateY(-22px) translateX(8px); }
+  }
+
   .wrap { position: relative; z-index: 1; max-width: 420px; margin: 0 auto; }
 
   .header {
@@ -78,8 +91,26 @@
     color: var(--accent);
     position: relative;
     letter-spacing: -0.02em;
+    cursor: pointer;
+    user-select: none;
+    transition: transform 0.15s ease;
+    display: inline-block;
+  }
+  .balance-value.tapped { animation: bounce 0.5s ease; }
+  @keyframes bounce {
+    0%, 100% { transform: scale(1); }
+    30% { transform: scale(1.15) rotate(-2deg); }
+    60% { transform: scale(0.96) rotate(1deg); }
   }
   .balance-value span { font-size: 20px; font-weight: 600; color: var(--text-dim); margin-left: 6px; }
+
+  .barista-quote {
+    margin-top: 14px;
+    font-size: 13px;
+    color: var(--text-dim);
+    font-style: italic;
+    opacity: 0; animation: fadeUp 0.6s ease-out 0.35s forwards;
+  }
 
   .progress-section { margin-top: 22px; position: relative; }
   .progress-row {
@@ -183,6 +214,7 @@
 </head>
 <body>
   <div class="bg-glow"></div>
+  <div id="bubbles"></div>
   <div id="loading" class="loading"><div class="spinner"></div>Завантажуємо картку…</div>
   <div id="app" class="wrap" style="display:none;">
     <div class="header">
@@ -196,6 +228,7 @@
     <div class="card">
       <div class="balance-label">Твій баланс</div>
       <div class="balance-value" id="balanceValue">0<span>балів</span></div>
+      <div class="barista-quote" id="baristaQuote"></div>
 
       <div class="progress-section" id="progressSection"></div>
     </div>
@@ -215,6 +248,50 @@
   const tg = window.Telegram?.WebApp;
   if (tg) { tg.ready(); tg.expand(); }
 
+  function haptic(style) {
+    try { tg?.HapticFeedback?.impactOccurred(style || 'medium'); } catch (e) {}
+  }
+
+  function spawnBubbles() {
+    const colors = ['#c6f135', '#ff5c7a', '#a78bfa', '#ffc24b'];
+    const container = document.getElementById('bubbles');
+    for (let i = 0; i < 7; i++) {
+      const el = document.createElement('div');
+      const size = 10 + Math.random() * 22;
+      el.className = 'float-bubble';
+      el.style.width = size + 'px';
+      el.style.height = size + 'px';
+      el.style.left = Math.random() * 100 + 'vw';
+      el.style.top = Math.random() * 90 + 'vh';
+      el.style.background = colors[i % colors.length];
+      el.style.animationDelay = (Math.random() * 3) + 's';
+      el.style.animationDuration = (5 + Math.random() * 3) + 's';
+      container.appendChild(el);
+    }
+  }
+
+  const BARISTA_QUOTES_START = [
+    "Бариста вже знає твоє замовлення напам'ять ☕",
+    "Кожна чашка наближає тебе до подарунка 🎁",
+    "Ти на правильному шляху до безкоштовної кави!",
+  ];
+  const BARISTA_QUOTES_CLOSE = [
+    "Ще трохи — і смачна нагорода твоя 👀",
+    "Так близько, що майже відчуваєш смак 😌",
+    "Ще пара замовлень і вітаємо з подарунком!",
+  ];
+  const BARISTA_QUOTES_DONE = [
+    "Нагорода вже чекає на тебе — забирай! 🎉",
+    "Ти це заслужив. Йди пригощайся ☕✨",
+  ];
+
+  function pickQuote(balance, nextCost) {
+    if (!nextCost) return BARISTA_QUOTES_DONE[Math.floor(Math.random() * BARISTA_QUOTES_DONE.length)];
+    const left = nextCost - balance;
+    const list = left <= 20 ? BARISTA_QUOTES_CLOSE : BARISTA_QUOTES_START;
+    return list[Math.floor(Math.random() * list.length)];
+  }
+
   function launchConfetti() {
     const colors = ['#c6f135', '#ff5c7a', '#a78bfa', '#ffc24b'];
     for (let i = 0; i < 24; i++) {
@@ -231,35 +308,61 @@
   }
 
   async function loadData() {
+    spawnBubbles();
     const initData = tg?.initData || '';
     try {
       const res = await fetch('/api/me?initData=' + encodeURIComponent(initData));
       const data = await res.json();
+      if (!res.ok) {
+        renderError(data.error === 'user not found'
+          ? 'Схоже, ти ще не зареєстрований. Повернись у чат і натисни «Поділитися номером» 📱'
+          : 'Не вдалось перевірити дані. Спробуй відкрити картку ще раз.');
+        return;
+      }
       render(data);
+      haptic('light');
     } catch (e) {
-      document.getElementById('loading').innerText = 'Не вдалось завантажити дані. Спробуй ще раз пізніше.';
+      renderError('Не вдалось завантажити дані. Спробуй ще раз пізніше.');
     }
+  }
+
+  function renderError(text) {
+    const loading = document.getElementById('loading');
+    loading.querySelector('.spinner')?.remove();
+    loading.innerText = text;
   }
 
   function render(data) {
     document.getElementById('loading').style.display = 'none';
     document.getElementById('app').style.display = 'block';
 
+    const balance = Number.isFinite(data.balance) ? data.balance : 0;
+
     document.getElementById('userName').textContent = data.name || 'Друже';
-    document.getElementById('balanceValue').innerHTML = data.balance + '<span>балів</span>';
+    const balanceEl = document.getElementById('balanceValue');
+    balanceEl.innerHTML = balance + '<span>балів</span>';
+    balanceEl.onclick = () => {
+      haptic('rigid');
+      balanceEl.classList.remove('tapped');
+      void balanceEl.offsetWidth; // restart animation
+      balanceEl.classList.add('tapped');
+    };
 
     const progressSection = document.getElementById('progressSection');
     const rewardsList = document.getElementById('rewardsList');
     progressSection.innerHTML = '';
     rewardsList.innerHTML = '';
 
-    const nextReward = data.rewards.find(r => data.balance < r.cost);
+    const rewards = data.rewards || [];
+    const nextReward = rewards.find(r => balance < r.cost);
+    document.getElementById('baristaQuote').textContent = pickQuote(balance, nextReward?.cost);
+
     if (nextReward) {
-      const pct = Math.min(100, Math.round((data.balance / nextReward.cost) * 100));
+      const pct = Math.min(100, Math.round((balance / nextReward.cost) * 100));
       progressSection.innerHTML = `
         <div class="progress-row">
           <span class="reward-name">${nextReward.name}</span>
-          <span class="reward-left">ще ${nextReward.cost - data.balance}</span>
+          <span class="reward-left">ще ${nextReward.cost - balance}</span>
         </div>
         <div class="progress-track"><div class="progress-fill" id="fillBar"></div></div>
       `;
@@ -267,12 +370,12 @@
         const fill = document.getElementById('fillBar');
         if (fill) fill.style.width = pct + '%';
       }, 150);
-    } else {
+    } else if (rewards.length) {
       progressSection.innerHTML = `<div class="progress-row"><span class="reward-name">🎉 Всі нагороди відкриті!</span></div>`;
     }
 
-    data.rewards.forEach(r => {
-      const unlocked = data.balance >= r.cost;
+    rewards.forEach(r => {
+      const unlocked = balance >= r.cost;
       const div = document.createElement('div');
       div.className = 'reward-item' + (unlocked ? ' unlocked' : '');
       div.innerHTML = `
@@ -305,7 +408,7 @@
       });
     }
 
-    if (data.just_unlocked) launchConfetti();
+    if (data.just_unlocked) { launchConfetti(); haptic('heavy'); }
   }
 
   loadData();
