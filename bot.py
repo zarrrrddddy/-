@@ -686,7 +686,7 @@ async def handle_api_me(request: web.Request) -> web.Response:
     return web.json_response(
         {
             "name": user["name"],
-            "balance": user["balance"],
+            "balance": user["balance"] or 0,
             "rewards": REWARDS,
             "history": history_out,
             "just_unlocked": False,
